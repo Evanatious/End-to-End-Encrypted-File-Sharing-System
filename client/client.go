@@ -119,6 +119,90 @@ type UserDS struct {
 	HMACsignature       []byte
 }
 
+// This is the type definition for the file sentinel struct
+// We want to use a doubly linked list to store the file data
+// We want a file sentinel struct to store the head and tail of the doubly linked list
+// We want a file struct to store the data and the pointers to the next and previous blocks
+type FileSentinel struct {
+	Head *File
+	Tail *File
+}
+
+// This is the type definition for the file struct
+type File struct {
+	Data []byte
+	Next *File
+	Prev *File
+}
+
+// This is the type definition for the invitation struct
+type Invitation struct {
+	FileUUID string
+	AESKey   []byte
+	HMACKey  []byte
+}
+
+// Helper functions
+
+// This function is used to Encrypt and MAC data using a SourceKey and a purpose field
+func EncryptAndMAC(sourceKey []byte, data []byte, purpose string) (encryptedData []byte, HMAC []byte) {
+	// Generate a random IV
+	IV := userlib.RandomBytes(16)
+	// Generate the first 16 bytes of the AES key
+	AESKey, err := userlib.HashKDF(sourceKey, []byte(purpose+"AESKey"))
+	if err != nil {
+		panic(err)
+	}
+	AESKey = AESKey[:16]
+
+	// Generate the first 16 bytes of the HMAC key
+	HMACKey, err := userlib.HashKDF(sourceKey, []byte(purpose+"HMACKey"))
+	if err != nil {
+		panic(err)
+	}
+	HMACKey = HMACKey[:16]
+
+	// Encrypt the data
+	encryptedData = userlib.SymEnc(AESKey, IV, data)
+
+	// Generate the HMAC
+	// Use HMACEval(key []byte, msg []byte) (sum []byte, err error)
+	HMAC, err = userlib.HMACEval(HMACKey, encryptedData)
+
+	// Return the encrypted data and the HMAC
+	return encryptedData, HMAC
+}
+
+// This function is used to verify and decrypt data using a SourceKey and a purpose field
+func VerifyAndDecrypt(sourceKey []byte, encryptedData []byte, HMAC []byte, purpose string) (data []byte, err error) {
+	// Generate the first 16 bytes of the AES key
+	AESKey, err := userlib.HashKDF(sourceKey, []byte(purpose+"AESKey"))
+	if err != nil {
+		panic(err)
+	}
+	AESKey = AESKey[:16]
+
+	// Generate the first 16 bytes of the HMAC key
+	HMACKey, err := userlib.HashKDF(sourceKey, []byte(purpose+"HMACKey"))
+	if err != nil {
+		panic(err)
+	}
+	HMACKey = HMACKey[:16]
+
+	// Verify the HMAC
+	// Use HMACEqual(a []byte, b []byte) (equal bool
+	if !userlib.HMACEqual(HMAC, encryptedData) {
+		return nil, errors.New("HMAC does not match")
+	}
+
+	// Decrypt the data
+	// Use SymDec(key []byte, ciphertext []byte) (plaintext []byte)
+	data = userlib.SymDec(AESKey, encryptedData)
+
+	// Return the decrypted data
+	return data, nil
+}
+
 // NOTE: The following methods have toy (insecure!) implementations.
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
