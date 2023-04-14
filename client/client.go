@@ -189,9 +189,13 @@ func VerifyAndDecrypt(sourceKey []byte, encryptedData []byte, HMAC []byte, purpo
 	}
 	HMACKey = HMACKey[:16]
 
+	// Generate the HMAC
+	// Use HMACEval(key []byte, msg []byte) (sum []byte, err error)
+	HMAC2, err := userlib.HMACEval(HMACKey, encryptedData)
+
 	// Verify the HMAC
 	// Use HMACEqual(a []byte, b []byte) (equal bool
-	if !userlib.HMACEqual(HMAC, encryptedData) {
+	if !userlib.HMACEqual(HMAC, HMAC2) {
 		return nil, errors.New("HMAC does not match")
 	}
 
@@ -257,33 +261,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	AESKey = AESKey[:16]
 
 	// Encrypt the userdata struct with AESKey
-	// Use SymEnc(key []byte, iv []byte, plaintext []byte) (ciphertext []byte)
 	var userdataBytes []byte
 	userdataBytes, err = json.Marshal(userdata)
 	if err != nil {
 		return nil, err
 	}
-	var iv []byte
-	iv = userlib.RandomBytes(16)
-	var encryptedUserStruct []byte
-	encryptedUserStruct = userlib.SymEnc(AESKey, iv, userdataBytes)
-
-	// Generate a 16 byte HMAC key from the SourceKey
-	// Use HashKDF(sourceKey []byte, purpose []byte) (derivedKey []byte, err error)
-	var HMACKey []byte
-	HMACKey, err = userlib.HashKDF(SourceKey, []byte("HMACKey"))
-	if err != nil {
-		return nil, err
-	}
-	HMACKey = HMACKey[:16]
-
-	// Generate HMAC of encryptedUserStruct
-	// Use HMACEval(key []byte, msg []byte) (sum []byte, err error)
-	var HMAC []byte
-	HMAC, err = userlib.HMACEval(HMACKey, encryptedUserStruct)
-	if err != nil {
-		return nil, err
-	}
+	encryptedUserStruct, HMAC := EncryptAndMAC(SourceKey, userdataBytes, "")
 
 	// Create a UserDS struct
 	userds := UserDS{encryptedUserStruct, HMAC}
@@ -301,7 +284,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// userlib.DebugMsg("Deterministic UUID: %v", deterministicUUID.String())
 
 	// Store the UserDS struct in DataStore
-	// Use DatastoreSet(key string, value []byte)
 	var userdsBytes []byte
 	userdsBytes, err = json.Marshal(userds)
 	if err != nil {
@@ -320,16 +302,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	hash := userlib.Hash([]byte(username + password + "||"))
 	deterministicUUID, err := uuid.FromBytes(hash[:16])
 	if err != nil {
-		// Normally, we would `return err` here. But, since this function doesn't return anything,
-		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
-		// code should have hundreds of "if err != nil { return err }" statements by the end of this
-		// project. You probably want to avoid using panic statements in your own code.
 		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
 	}
-	// userlib.DebugMsg("Deterministic UUID: %v", deterministicUUID.String())
 
 	// Retrieve the UserDS struct from DataStore
-	// Use DatastoreGet(key string) (value []byte, ok bool)
 	var userdsBytes []byte
 	userdsBytes, ok := userlib.DatastoreGet(deterministicUUID)
 
@@ -350,45 +326,15 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	HMAC := userds.HMACsignature
 
 	// Generate SourceKey with username as salt
-	// Use Argon2Key(password []byte, salt []byte, keyLen uint32) (result []byte)
 	var SourceKey []byte
 	SourceKey = userlib.Argon2Key([]byte(password), []byte(username), 16)
-	// userlib.DebugMsg("SourceKey: %v", SourceKey)
 
-	// Generate the 16 byte HMAC key from the SourceKey
-	// Use HashKDF(sourceKey []byte, purpose []byte) (derivedKey []byte, err error)
-	var HMACKey []byte
-	HMACKey, err = userlib.HashKDF(SourceKey, []byte("HMACKey"))
-	if err != nil {
-		return nil, err
-	}
-	HMACKey = HMACKey[:16]
-
-	// Verify HMAC of encryptedUserStruct
-	// Use HMACEval(key []byte, msg []byte) (sum []byte, err error)
-	var HMACverify []byte
-	HMACverify, err = userlib.HMACEval(HMACKey, encryptedUserStruct)
-	if err != nil {
-		return nil, err
-	}
-	// Check if the user struct has been tampered with
-	if !userlib.HMACEqual(HMAC, HMACverify) {
-		return nil, errors.New("HMAC verification failed")
-	}
-
-	// Generate the 16 byte AESKey from the SourceKey
-	// Use HashKDF(sourceKey []byte, purpose []byte) (derivedKey []byte, err error)
-	var AESKey []byte
-	AESKey, err = userlib.HashKDF(SourceKey, []byte("AESKey"))
-	if err != nil {
-		return nil, err
-	}
-	AESKey = AESKey[:16]
-
-	// Decrypt the encryptedUserStruct
-	// Use SymDec(key []byte, ciphertext []byte) (plaintext []byte)
+	// Verify and decrypt the encryptedUserStruct
 	var userStructBytes []byte
-	userStructBytes = userlib.SymDec(AESKey, encryptedUserStruct)
+	userStructBytes, err = VerifyAndDecrypt(SourceKey, encryptedUserStruct, HMAC, "")
+	if err != nil {
+		return nil, err
+	}
 
 	// Unmarshal the User struct
 	err = json.Unmarshal(userStructBytes, &userdata)
@@ -397,7 +343,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 
 	// Return the user instance
-	return userdataptr, nil
+	return &userdata, nil
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
