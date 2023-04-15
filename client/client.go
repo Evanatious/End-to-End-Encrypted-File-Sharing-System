@@ -113,10 +113,10 @@ type User struct {
 	// begins with a lowercase letter).
 }
 
-// This is the type definition for the User struct which is stored in the DataStore.
-type UserDS struct {
-	EncryptedUserStruct []byte
-	HMACsignature       []byte
+// This is the type definition for the struct that stores the encrypted data along with its signature, which is stored in the DataStore.
+type ETM struct {
+	EncryptedData []byte
+	HMACsignature []byte
 }
 
 // This is the type definition for the file sentinel struct
@@ -141,6 +141,19 @@ type Invitation struct {
 	AESKey   []byte
 	HMACKey  []byte
 }
+
+/*
+//This is the type definition for the filenames set struct which is stored in the DataStore
+type FileNamesSet struct {
+	EncryptedFileNamesSet []byte
+	HMACsignature []byte
+}
+
+//This is the type definition for the SharedByMe map struct which is stored in the DataStore
+type SharedByMeMap struct {
+	EncryptedSharedByMeMap []byte
+	HMACsignature []byte
+}*/
 
 // Helper functions
 
@@ -251,6 +264,64 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	SourceKey = userlib.Argon2Key([]byte(password), []byte(username), 16)
 	// userlib.DebugMsg("SourceKey: %v", SourceKey)
 
+	//Create a map of files owned by this user to sets of users this user shared it with
+	OwnedFiles := make(map[string]map[string]bool) //TODO: Figure out if this is correct
+	//Marshal the map
+	OwnedFilesBytes, err := json.Marshal(OwnedFiles)
+	if err != nil {
+		return nil, err
+	}
+	//Encrypt and MAC the mapping
+	encryptedFilenames, HMAC := EncryptAndMAC(SourceKey, OwnedFilesBytes, "Owned")
+	//Create a ETM struct to hold the encrypted filenames set and the HMAC
+	EncryptedOwned := ETM{encryptedFilenames, HMAC}
+	//Marshal the ETM struct
+	EncryptedOwnedBytes, err := json.Marshal(EncryptedOwned)
+	if err != nil {
+		return nil, err
+	}
+	//Create a unique UUID by hashing username + password + "Owned"
+	hash := userlib.Hash([]byte(username + password + "Owned"))
+	deterministicUUID, err := uuid.FromBytes(hash[:16])
+	if err != nil {
+		// Normally, we would `return err` here. But, since this function doesn't return anything,
+		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
+		// code should have hundreds of "if err != nil { return err }" statements by the end of this
+		// project. You probably want to avoid using panic statements in your own code.
+		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
+	}
+	//Store the ETM struct in the DataStore
+	userlib.DatastoreSet(deterministicUUID, EncryptedOwnedBytes)
+
+	//Create a map of files shared with this user to the user who shared it
+	SharedFiles := make(map[string]string)
+	//Marshal the map
+	SharedFilesBytes, err := json.Marshal(SharedFiles)
+	if err != nil {
+		return nil, err
+	}
+	//Encrypt and MAC the mapping
+	encryptedFilenames, HMAC = EncryptAndMAC(SourceKey, SharedFilesBytes, "Shared")
+	//Create a ETM struct to hold the encrypted filenames set and the HMAC
+	EncryptedShared := ETM{encryptedFilenames, HMAC}
+	//Marshal the ETM struct
+	EncryptedSharedBytes, err := json.Marshal(EncryptedShared)
+	if err != nil {
+		return nil, err
+	}
+	//Create a unique UUID by hashing username + password + "Shared"
+	hash = userlib.Hash([]byte(username + password + "Shared"))
+	deterministicUUID, err = uuid.FromBytes(hash[:16])
+	if err != nil {
+		// Normally, we would `return err` here. But, since this function doesn't return anything,
+		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
+		// code should have hundreds of "if err != nil { return err }" statements by the end of this
+		// project. You probably want to avoid using panic statements in your own code.
+		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
+	}
+	//Store the ETM struct in the DataStore
+	userlib.DatastoreSet(deterministicUUID, EncryptedSharedBytes)
+
 	// Generate a 16 byte AES key from the SourceKey
 	// Use HashKDF(sourceKey []byte, purpose []byte) (derivedKey []byte, err error)
 	var AESKey []byte
@@ -260,7 +331,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	AESKey = AESKey[:16]
 
-	// Encrypt the userdata struct with AESKey
+	// Encrypt the userdata struct with AESKey and MAC it with HMACKey
 	var userdataBytes []byte
 	userdataBytes, err = json.Marshal(userdata)
 	if err != nil {
@@ -268,17 +339,13 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	encryptedUserStruct, HMAC := EncryptAndMAC(SourceKey, userdataBytes, "")
 
-	// Create a UserDS struct
-	userds := UserDS{encryptedUserStruct, HMAC}
+	// Create an ETM struct to store the encrypted userdata struct and the HMAC
+	userds := ETM{encryptedUserStruct, HMAC}
 
 	// Creates a UUID deterministically, from the hash of the username + password + delimiter
-	hash := userlib.Hash([]byte(username + password + "||"))
-	deterministicUUID, err := uuid.FromBytes(hash[:16])
+	hash = userlib.Hash([]byte(username + password + "||"))
+	deterministicUUID, err = uuid.FromBytes(hash[:16])
 	if err != nil {
-		// Normally, we would `return err` here. But, since this function doesn't return anything,
-		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
-		// code should have hundreds of "if err != nil { return err }" statements by the end of this
-		// project. You probably want to avoid using panic statements in your own code.
 		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
 	}
 	// userlib.DebugMsg("Deterministic UUID: %v", deterministicUUID.String())
@@ -314,15 +381,15 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("User not found")
 	}
 
-	// Unmarshal the UserDS struct
-	var userds UserDS
+	// Unmarshal the User struct
+	var userds ETM
 	err = json.Unmarshal(userdsBytes, &userds)
 	if err != nil {
 		return nil, err
 	}
 
 	// Extract the encryptedUserStruct and HMAC from UserDS struct
-	encryptedUserStruct := userds.EncryptedUserStruct
+	encryptedUserStruct := userds.EncryptedData
 	HMAC := userds.HMACsignature
 
 	// Generate SourceKey with username as salt
