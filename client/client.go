@@ -1,10 +1,5 @@
 package client
 
-// CS 161 Project 2
-
-// You MUST NOT change these default imports. ANY additional imports
-// may break the autograder!
-
 import (
 	"encoding/json"
 
@@ -27,8 +22,7 @@ import (
 )
 
 // This serves two purposes: it shows you a few useful primitives,
-// and suppresses warnings for imports not being used. It can be
-// safely deleted!
+// and suppresses warnings for imports not being used.
 func someUsefulThings() {
 
 	// Creates a random UUID.
@@ -45,7 +39,7 @@ func someUsefulThings() {
 		// Normally, we would `return err` here. But, since this function doesn't return anything,
 		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
 		// code should have hundreds of "if err != nil { return err }" statements by the end of this
-		// project. You probably want to avoid using panic statements in your own code.
+		// project.
 		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
 	}
 	userlib.DebugMsg("Deterministic UUID: %v", deterministicUUID.String())
@@ -73,9 +67,6 @@ func someUsefulThings() {
 	userlib.DebugMsg("PKE Key Pair: (%v, %v)", pk, sk)
 
 	// Here's an example of how to use HBKDF to generate a new key from an input key.
-	// Tip: generate a new key everywhere you possibly can! It's easier to generate new keys on the fly
-	// instead of trying to think about all of the ways a key reuse attack could be performed. It's also easier to
-	// store one key and derive multiple keys from that one key, rather than
 	originalKey := userlib.RandomBytes(16)
 	derivedKey, err := userlib.HashKDF(originalKey, []byte("mac-key"))
 	if err != nil {
@@ -314,9 +305,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	deterministicUUID, err = uuid.FromBytes(hash[:16])
 	if err != nil {
 		// Normally, we would `return err` here. But, since this function doesn't return anything,
-		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
-		// code should have hundreds of "if err != nil { return err }" statements by the end of this
-		// project. You probably want to avoid using panic statements in your own code.
+		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors!
 		panic(errors.New("An error occurred while generating a UUID: " + err.Error()))
 	}
 	//Store the ETM struct in the DataStore
